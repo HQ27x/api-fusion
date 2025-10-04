@@ -1,3 +1,4 @@
+# app.py - Versión Final Corregida y Segura
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -6,13 +7,27 @@ import pandas as pd
 import requests
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+import os # Importante para leer variables de entorno
 
 # --- CONFIGURACIÓN ---
 app = Flask(__name__)
 CORS(app)
 
-# ¡¡MUY IMPORTANTE!! Pega tus claves de API aquí
-OPENWEATHERMAP_API_KEY = "b9887004fb83b6baf80ea22a539cc923"
+# --- SEGURIDAD: OBTENER API KEY DESDE EL ENTORNO DE RENDER ---
+# La clave secreta se configura en la web de Render, no aquí.
+OPENWEATHERMAP_API_KEY = os.environ.get('OPENWEATHERMAP_API_KEY')
+
+# --- ORDEN EXACTO DE CARACTERÍSTICAS QUE EL MODELO APRENDIÓ ---
+# Esta lista garantiza que los datos se presenten al modelo en el orden correcto.
+FEATURE_ORDER = [
+    'T2M_lag_1', 'RH2M_lag_1', 'WS2M_lag_1', 'PS_lag_1',
+    'T2M_lag_2', 'RH2M_lag_2', 'WS2M_lag_2', 'PS_lag_2',
+    'T2M_lag_3', 'RH2M_lag_3', 'WS2M_lag_3', 'PS_lag_3',
+    'T2M_lag_4', 'RH2M_lag_4', 'WS2M_lag_4', 'PS_lag_4',
+    'T2M_lag_5', 'RH2M_lag_5', 'WS2M_lag_5', 'PS_lag_5',
+    'T2M_lag_6', 'RH2M_lag_6', 'WS2M_lag_6', 'PS_lag_6',
+    'month'
+]
 
 # --- CARGA DE TUS MODELOS DE IA ---
 MODELS = {}
@@ -26,10 +41,12 @@ for var in TARGET_VARIABLES:
     except Exception as e:
         print(f"❌ Error al cargar '{filename}': {e}")
 
-# --- FUNCIONES AUXILIARES ---
-
+# --- FUNCIÓN 1: OBTENER PRONÓSTICO DIARIO (OpenWeatherMap) ---
 def get_daily_forecast(lat, lng):
     print("🌦️  Obteniendo pronóstico diario de OpenWeatherMap...")
+    if not OPENWEATHERMAP_API_KEY:
+        print("Error: La clave de API de OpenWeatherMap no está configurada en el entorno.")
+        return None
     try:
         url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lng}&exclude=current,minutely,hourly,alerts&appid={OPENWEATHERMAP_API_KEY}&units=metric&lang=es"
         response = requests.get(url, timeout=10)
@@ -50,6 +67,7 @@ def get_daily_forecast(lat, lng):
         print(f"Error en OpenWeatherMap: {e}")
     return None
 
+# --- FUNCIÓN 2: OBTENER Y PROCESAR DATOS HISTÓRICOS (NASA) ---
 def get_features_from_nasa(lat, lng):
     print("🛰️  Obteniendo datos históricos de NASA POWER...")
     try:
@@ -67,10 +85,8 @@ def get_features_from_nasa(lat, lng):
         last_6_months = monthly_avg.iloc[-7:-1]
         
         features = {}
-        # --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
-        # Iteramos de forma inversa de una manera más robusta para evitar el error.
+        # Iteramos de forma inversa de una manera más robusta
         for i in range(len(last_6_months)):
-            # Obtenemos la fila por índice, empezando desde la última
             row = last_6_months.iloc[len(last_6_months) - 1 - i]
             lag = i + 1
             features[f'T2M_lag_{lag}'] = row['T2M']
@@ -98,10 +114,13 @@ def predict_full():
     ml_prediction = None
     if features_for_ml and MODELS:
         try:
-            input_df = pd.DataFrame(features_for_ml, index=[0])
+            input_df_unordered = pd.DataFrame(features_for_ml, index=[0])
+            # Forzar el DataFrame a tener el orden exacto de columnas que el modelo espera.
+            input_df_ordered = input_df_unordered[FEATURE_ORDER]
+
             predictions = {}
             for var, model in MODELS.items():
-                pred = model.predict(input_df)
+                pred = model.predict(input_df_ordered)
                 predictions[var] = round(float(pred[0]), 2)
             ml_prediction = {
                 "temperature_celsius": predictions.get('T2M'),
@@ -111,6 +130,7 @@ def predict_full():
             }
         except Exception as e:
             print(f"Error en predicción de IA: {e}")
+            ml_prediction = {"error": "No se pudo generar la predicción del modelo."}
 
     final_response = {
         "location": f"Lima, Peru (lat: {lat}, lon: {lng})",
