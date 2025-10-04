@@ -1,4 +1,3 @@
-# app.py - API Híbrida de Predicción del Clima
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -27,16 +26,17 @@ for var in TARGET_VARIABLES:
     except Exception as e:
         print(f"❌ Error al cargar '{filename}': {e}")
 
-# --- FUNCIÓN 1: OBTENER PRONÓSTICO DIARIO (OpenWeatherMap) ---
+# --- FUNCIONES AUXILIARES ---
+
 def get_daily_forecast(lat, lng):
     print("🌦️  Obteniendo pronóstico diario de OpenWeatherMap...")
     try:
         url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lng}&exclude=current,minutely,hourly,alerts&appid={OPENWEATHERMAP_API_KEY}&units=metric&lang=es"
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         data = response.json()
         if response.status_code == 200:
             forecast_list = []
-            for dia in data['daily'][:5]: # Tomamos los próximos 5 días
+            for dia in data['daily'][:5]:
                 fecha = datetime.fromtimestamp(dia['dt'])
                 forecast_list.append({
                     "date": fecha.strftime('%Y-%m-%d'),
@@ -50,7 +50,6 @@ def get_daily_forecast(lat, lng):
         print(f"Error en OpenWeatherMap: {e}")
     return None
 
-# --- FUNCIÓN 2: OBTENER Y PROCESAR DATOS HISTÓRICOS (NASA) ---
 def get_features_from_nasa(lat, lng):
     print("🛰️  Obteniendo datos históricos de NASA POWER...")
     try:
@@ -58,10 +57,9 @@ def get_features_from_nasa(lat, lng):
         end_date = datetime.now() - relativedelta(days=5)
         start_date = end_date - relativedelta(months=7)
         params = {"start": start_date.strftime("%Y%m%d"), "end": end_date.strftime("%Y%m%d"), "latitude": lat, "longitude": lng, "community": "re", "parameters": "T2M,RH2M,WS2M,PS", "format": "json"}
-        response = requests.get(base_url, params=params)
+        response = requests.get(base_url, params=params, timeout=20)
         nasa_data = response.json()
         
-        # Procesar los datos
         df = pd.DataFrame(nasa_data['properties']['parameter'])
         df.index = pd.to_datetime(df.index, format='%Y%m%d%H')
         df.replace(-999, pd.NA, inplace=True)
@@ -69,12 +67,17 @@ def get_features_from_nasa(lat, lng):
         last_6_months = monthly_avg.iloc[-7:-1]
         
         features = {}
-        for i, row in enumerate(reversed(last_6_months.itertuples())):
+        # --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
+        # Iteramos de forma inversa de una manera más robusta para evitar el error.
+        for i in range(len(last_6_months)):
+            # Obtenemos la fila por índice, empezando desde la última
+            row = last_6_months.iloc[len(last_6_months) - 1 - i]
             lag = i + 1
-            features[f'T2M_lag_{lag}'] = row.T2M
-            features[f'RH2M_lag_{lag}'] = row.RH2M
-            features[f'WS2M_lag_{lag}'] = row.WS2M
-            features[f'PS_lag_{lag}'] = row.PS
+            features[f'T2M_lag_{lag}'] = row['T2M']
+            features[f'RH2M_lag_{lag}'] = row['RH2M']
+            features[f'WS2M_lag_{lag}'] = row['WS2M']
+            features[f'PS_lag_{lag}'] = row['PS']
+        
         features['month'] = datetime.now().month
         return features
     except Exception as e:
@@ -89,10 +92,7 @@ def predict_full():
     if not lat or not lng:
         return jsonify({'error': 'Parámetros "lat" y "lng" son requeridos.'}), 400
 
-    # 1. Obtener pronóstico a corto plazo
     daily_forecast = get_daily_forecast(float(lat), float(lng))
-
-    # 2. Obtener y procesar datos para el modelo de IA
     features_for_ml = get_features_from_nasa(float(lat), float(lng))
     
     ml_prediction = None
@@ -112,7 +112,6 @@ def predict_full():
         except Exception as e:
             print(f"Error en predicción de IA: {e}")
 
-    # 3. Construir la respuesta final
     final_response = {
         "location": f"Lima, Peru (lat: {lat}, lon: {lng})",
         "short_term_forecast_5_days": daily_forecast,
