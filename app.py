@@ -55,12 +55,15 @@ def get_daily_forecast(lat, lng):
             forecast_list = []
             for dia in data['daily'][:5]:
                 fecha = datetime.fromtimestamp(dia['dt'])
+                # --- ¡AQUÍ ESTÁ LA MODIFICACIÓN! ---
                 forecast_list.append({
                     "date": fecha.strftime('%Y-%m-%d'),
                     "day_name": fecha.strftime('%A'),
                     "temp_min_celsius": dia['temp']['min'],
                     "temp_max_celsius": dia['temp']['max'],
-                    "condition": dia['weather'][0]['description'].capitalize()
+                    "condition": dia['weather'][0]['description'].capitalize(),
+                    "humidity": dia['humidity'],           # <-- AÑADIDO
+                    "wind_speed_ms": dia['wind_speed']    # <-- AÑADIDO
                 })
             return forecast_list
     except Exception as e:
